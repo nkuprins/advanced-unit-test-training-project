@@ -10,15 +10,22 @@ import lv.bootcamp.shelter.model.AnimalType;
 import lv.bootcamp.shelter.repository.AnimalRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.returnsFirstArg;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -37,6 +44,9 @@ class AnimalServiceTest {
 
     @InjectMocks
     private AnimalService animalService;
+
+    @Captor
+    private ArgumentCaptor<List<Long>> idsCaptor;
 
     @Test
     void create_shouldSaveAnimalWithAvailableStatus() {
@@ -76,5 +86,52 @@ class AnimalServiceTest {
         assertThatThrownBy(() -> animalService.adopt(
                 new AdoptionRequest(1L, "Anna", "anna@example.com")))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void adopt_shouldMarkAnimalAdoptedAndSendNotification() {
+        Animal animal = new Animal();
+        animal.setId(1L);
+        animal.setName("Rex");
+        animal.setStatus(AnimalStatus.AVAILABLE);
+
+        when(animalRepository.findById(1L)).thenReturn(Optional.of(animal));
+        when(animalRepository.save(animal)).thenReturn(animal);
+
+        AnimalResponse response = animalService.adopt(
+                new AdoptionRequest(1L, "Anna", "anna@example.com"));
+
+        assertThat(response.status()).isEqualTo(AnimalStatus.ADOPTED);
+        verify(notificationClient).sendAdoptionNotification(1L, "Rex", "anna@example.com");
+    }
+
+    @Test
+    void reserveMultiple_shouldNotifyWithExactlyTheReservedIds() {
+        Animal first = new Animal();
+        first.setId(1L);
+        first.setStatus(AnimalStatus.AVAILABLE);
+        Animal second = new Animal();
+        second.setId(2L);
+        second.setStatus(AnimalStatus.AVAILABLE);
+
+        when(animalRepository.findAllById(List.of(1L, 2L))).thenReturn(List.of(first, second));
+        when(animalRepository.save(any(Animal.class))).thenAnswer(returnsFirstArg());
+
+        animalService.reserveMultiple(List.of(1L, 2L));
+
+        verify(notificationClient).sendBulkStatusNotification(idsCaptor.capture(), eq("RESERVED"));
+        assertThat(idsCaptor.getValue()).containsExactlyInAnyOrder(1L, 2L);
+    }
+
+    @Test
+    void create_shouldRejectDuplicateMicrochipWithoutSaving() {
+        AnimalCreateRequest request =
+                new AnimalCreateRequest("Rex", AnimalType.DOG, "Labrador", 3, "Friendly", "CHIP-123");
+        when(animalRepository.existsByMicrochipId("CHIP-123")).thenReturn(true);
+
+        assertThatThrownBy(() -> animalService.create(request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("CHIP-123");
+        verify(animalRepository, never()).save(any());
     }
 }
