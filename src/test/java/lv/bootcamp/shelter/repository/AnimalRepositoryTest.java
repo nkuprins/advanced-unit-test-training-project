@@ -7,8 +7,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Ticket: ANIMAL-3 (see README).
@@ -38,11 +40,29 @@ class AnimalRepositoryTest {
         assertThat(available.getFirst().getName()).isEqualTo("Rex");
     }
 
+    @Test
+    void save_shouldFailWhenMicrochipIdIsDuplicated() {
+        entityManager.persistAndFlush(newAnimal("Rex", AnimalType.DOG, AnimalStatus.AVAILABLE, "CHIP-123"));
+
+        Animal duplicate = newAnimal("Max", AnimalType.DOG, AnimalStatus.AVAILABLE, "CHIP-123");
+
+        // Hibernate docs: "The IDENTITY generator must execute the insert right after calling persist()"
+        // Otherwise, I would have used flush here as well.
+        assertThatThrownBy(() -> animalRepository.save(duplicate))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     private Animal newAnimal(String name, AnimalType type, AnimalStatus status) {
         Animal animal = new Animal();
         animal.setName(name);
         animal.setType(type);
         animal.setStatus(status);
+        return animal;
+    }
+
+    private Animal newAnimal(String name, AnimalType type, AnimalStatus status, String microchipId) {
+        Animal animal = newAnimal(name, type, status);
+        animal.setMicrochipId(microchipId);
         return animal;
     }
 }
